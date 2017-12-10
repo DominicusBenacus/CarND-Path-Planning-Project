@@ -369,16 +369,16 @@ int calcNewLane(int prev_size, int lane, laneCollection laneData,
     double avgSpeed = laneData.laneSpeeds[laneCase];
     cost += getNormalized(2.0 * (avgSpeed - car_speed / avgSpeed)) * 1000;
     // Evaluate the collision
-    double gap = 8;
+    double saftyDistance = 8;
     vector<int> cars_ids = calcLaneCarsIDs(laneCase, sensor_fusion);
     double closestObject = calcClosestDistanceToEgo(cars_ids, sensor_fusion,
                                                     0.02 * prev_size, car_s);
 
-    if (closestObject < gap) {
+    if (closestObject < saftyDistance) {
       cost += 100000;
     }
 
-    cost += getNormalized(2 * gap / closestObject) * 1000;
+    cost += getNormalized(2 * saftyDistance / closestObject) * 1000;
 
     if (cost < bestCost) {
       bestLane = laneCase;
