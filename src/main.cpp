@@ -77,6 +77,10 @@ int NextWaypoint(double x, double y, double theta, const vector<double> &maps_x,
   return closestWaypoint;
 }
 
+uint16_t calcLaneForGivenFrenetD(double d) {
+  uint16_t laneWidth = 4;
+  return uint16_t(floor(d / laneWidth));
+}
 // Transform from Cartesian x,y coordinates to Frenet s,d coordinates
 vector<double> getFrenet(double x, double y, double theta,
                          const vector<double> &maps_x,
@@ -150,11 +154,6 @@ vector<double> getXY(double s, double d, const vector<double> &maps_s,
 
   return {x, y};
 }
-// Get the Lane number based on Frenet coordinates
-int getLaneFrenet(double d) {
-  int lane_width = 4;
-  return int(floor(d / lane_width));
-}
 
 struct object {
   int car_id;
@@ -175,20 +174,13 @@ struct object {
         frenet_s(frenet_s) {}
 } closestObject;
 
-// Get ID's of cars in a given lane
 vector<int> calcLaneCarsIDs(int lane, json sensor_fusion) {
   vector<int> cars_ids;
-
   for (int i = 0; i < sensor_fusion.size(); ++i) {
-    float some_d = sensor_fusion[i][6];
-    int some_lane = getLaneFrenet(some_d);
-
-    // Check
-    if (some_lane < 0 || some_lane > 2) {
-      continue;
-    }
+    float currentD = sensor_fusion[i][6];
+    uint16_t laneForGivenD = calcLaneForGivenFrenetD(currentD);
     // Collect vehicles in the entered lane
-    if (some_lane == lane) {
+    if (laneForGivenD == lane) {
       cars_ids.push_back(i);
     }
   }
@@ -214,7 +206,7 @@ laneCollection collectDataFromAllLanes(json sensor_fusion,
   // Collect data from all Lanes
   for (int i = 0; i < sensor_fusion.size(); ++i) {
     float d = sensor_fusion[i][6];
-    int lane = getLaneFrenet(d);
+    uint16_t lane = calcLaneForGivenFrenetD(d);
 
     // Check
     if (lane < 0 || lane > 2) {
