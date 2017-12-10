@@ -183,7 +183,7 @@ vector<int> calcLaneCarsIDs(int lane, json sensor_fusion) {
     float some_d = sensor_fusion[i][6];
     int some_lane = getLaneFrenet(some_d);
 
-    // Check for unbounded data
+    // Check
     if (some_lane < 0 || some_lane > 2) {
       continue;
     }
@@ -216,14 +216,13 @@ laneCollection collectDataFromAllLanes(json sensor_fusion,
     float d = sensor_fusion[i][6];
     int lane = getLaneFrenet(d);
 
-    // Check for unbounded data
+    // Check
     if (lane < 0 || lane > 2) {
       continue;
     } else if (lane >= 0 && lane <= 2) {
       double vx = sensor_fusion[i][3];
       double vy = sensor_fusion[i][4];
       double speed = sqrt(vx * vx + vy * vy);
-      // Convert to mph
       laneData.laneSpeeds[lane] += speed;
       laneData.vehiclesPerLane[lane] += 1;
     }
