@@ -21,25 +21,6 @@ constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
 double rad2deg(double x) { return x * 180 / pi(); }
 
-// from andrew
-// Returns lane number -1, 0, 1, 2 for specified d coord. in Frenet frame.
-int DtoLaneNumber(double d) {
-  if (d > 0 || d < -12)
-    return -1; // outside of right-driving road.
-  if (d < -8)
-    return 0;
-  else if (d < -4)
-    return 1;
-  return 2;
-}
-
-// Returns D - center of Lane for specified Lane number
-double LaneNumberToD(int nLaneNumber) {
-  constexpr std::array<double, 3> laneCenter = {-9.75, -6.0, -2.0};
-  assert(nLaneNumber >= 0 && nLaneNumber < 3);
-  return laneCenter[nLaneNumber];
-}
-
 // Checks if the SocketIO event has JSON data.
 // If there is data the JSON object in string format will be returned,
 // else the empty string "" will be returned.
