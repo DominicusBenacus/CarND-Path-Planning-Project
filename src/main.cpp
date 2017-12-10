@@ -214,19 +214,61 @@ vector<int> getLaneCars(int lane, json sensor_fusion) {
   return cars_ids;
 }
 
-// limit accelerartion
-double limitAcceleration(double axEgo, const double axLimitPositiv,
-                         const double axLimitNegativ) {
-  if (axEgo > axLimitPositiv) {
-    axEgo = axLimitPositiv;
+// ===================================================
+// Normalization for cost calculation
+double getNormalized(double x) { return 2.0f / (1.0f + exp(-x)) - 1.0f; }
 
-  } else if (axEgo < axLimitNegativ) {
-    axEgo = axLimitNegativ;
+struct laneCollection {
+  vector<double> laneSpeeds;
+  vector<int> vehiclesPerLane;
+
+  laneCollection(vector<double> laneSpeeds = {0.0, 0.0, 0.0},
+                 vector<int> vehiclesPerLane = {0, 0, 0})
+      : laneSpeeds(laneSpeeds), vehiclesPerLane(vehiclesPerLane) {}
+} laneData;
+
+// Speeds in each Lanes
+laneCollection collectDataFromAllLanes(json sensor_fusion,
+                                       laneCollection laneData) {
+  // Collect data from all Lanes
+  for (int i = 0; i < sensor_fusion.size(); ++i) {
+    float d = sensor_fusion[i][6];
+    int lane = getLaneFrenet(d);
+
+    // Check for unbounded data
+    if (lane < 0 || lane > 2) {
+      continue;
+    } else if (lane >= 0 && lane <= 2) {
+      double vx = sensor_fusion[i][3];
+      double vy = sensor_fusion[i][4];
+      double speed = sqrt(vx * vx + vy * vy);
+      // Convert to mph
+      laneData.laneSpeeds[lane] += speed;
+      laneData.vehiclesPerLane[lane] += 1;
+    }
   }
-  return axEgo;
+  return laneData;
 }
 
-// Calculate closest distance
+laneCollection averageSpeedDataForEveryLane(laneCollection laneData) {
+  // Averaging speed data for each lane
+  for (int i = 0; i < laneData.laneSpeeds.size(); ++i) {
+    int numVehicles =
+        laneData.vehiclesPerLane[i]; // Num of vehicles in the i-th lane
+    // If no vehicles in the lane - we could drive with max allowed
+    // speed there
+    if (numVehicles == 0) {
+      laneData.laneSpeeds[i] = double(49.5);
+    }
+    // Else - average the speed in the lane
+    else {
+      laneData.laneSpeeds[i] = laneData.laneSpeeds[i] / numVehicles;
+    }
+  }
+  return laneData;
+}
+
+// Calculate closest object data
 object getClosestDistanceOfEnteredCarIdsPerLaneInFront(vector<int> cars_ids,
                                                        json sensor_fusion,
                                                        double check_dist,
@@ -274,6 +316,100 @@ object getClosestDistanceOfEnteredCarIdsPerLaneInFront(vector<int> cars_ids,
     }
   }
   return closestObject;
+}
+
+double getClosestDistanceOfEnteredCarIdsPerLaneInFront(vector<int> cars_ids,
+                                                       json sensor_fusion,
+                                                       double check_dist,
+                                                       double car_s) {
+  double closestDistance = 100000;
+  for (int car_id : cars_ids) {
+    double vx = sensor_fusion[car_id][3];
+    double vy = sensor_fusion[car_id][4];
+    double speed = sqrt(vx * vx + vy * vy);
+    double carStartfrenetS = sensor_fusion[car_id][5];
+    double checkEndCarS = carStartfrenetS + check_dist * speed;
+
+    // Check whether car is in front
+    double distanceStart = fabs(carStartfrenetS - car_s);
+    if (distanceStart < closestDistance) {
+      closestDistance = distanceStart;
+    }
+
+    double distanceEnd = fabs(checkEndCarS - car_s);
+    if (distanceEnd < closestDistance) {
+      closestDistance = distanceEnd;
+    }
+  }
+  return closestDistance;
+}
+// ===================================================
+
+// limit accelerartion
+double limitAcceleration(double axEgo, const double axLimitPositiv,
+                         const double axLimitNegativ) {
+  if (axEgo > axLimitPositiv) {
+    axEgo = axLimitPositiv;
+
+  } else if (axEgo < axLimitNegativ) {
+    axEgo = axLimitNegativ;
+  }
+  return axEgo;
+}
+
+int calcNewLane(int prev_size, int lane, laneCollection laneData,
+                json sensor_fusion, double car_speed, double car_s) {
+
+  vector<int> laneCases;
+  // Define possible lanes to change to
+  switch (lane) {
+  case 0:
+    laneCases = {0, 1};
+    break;
+  case 1:
+    laneCases = {0, 1, 2};
+    break; // execution starts at this case label
+  case 2:
+    laneCases = {1, 2};
+    break;
+  }
+
+  int bestLane = lane;
+  double bestCost = numeric_limits<double>::max();
+
+  // Check cost for each lane based on the current ego vehicle state
+  for (int laneCase : laneCases) {
+    double cost = 0;
+
+    // 1. lane change is in general a big cost
+    // prefer to stay in lane for safety reasons
+    if (laneCases[1] == 2 && lane == 1) {
+      cost += 3000;
+    } else if (laneCase != lane) {
+      cost += 1000;
+    }
+    // 2. Evaluate Speed Cost
+    double avgSpeed = laneData.laneSpeeds[laneCase];
+    cost += getNormalized(2.0 * (avgSpeed - car_speed / avgSpeed)) * 1000;
+    // Evaluate the collision
+    double gap = 8;
+    vector<int> cars_ids = getLaneCars(laneCase, sensor_fusion);
+    double closestObject = getClosestDistanceOfEnteredCarIdsPerLaneInFront(
+        cars_ids, sensor_fusion, 0.02 * prev_size, car_s);
+
+    if (closestObject < gap) {
+      cost += 100000;
+    }
+
+    cost += getNormalized(2 * gap / closestObject) * 1000;
+
+    if (cost < bestCost) {
+      bestLane = laneCase;
+      bestCost = cost;
+    }
+  }
+  lane = bestLane;
+  return lane;
 }
 
 int main() {
@@ -371,35 +507,57 @@ int main() {
             car_s = end_path_s;
           }
 
-          // get IDs of ego lane
-          vector<int> cars_ids = getLaneCars(lane, sensor_fusion);
-          // how many lane cars are available
-          int numberOfCarIds = sizeof(cars_ids);
+          // =================  Collect and avarga speeds of lanes=========
+
+          laneCollection laneData;
+          laneData = collectDataFromAllLanes(sensor_fusion, laneData);
+          laneData = averageSpeedDataForEveryLane(laneData);
+
+          // =========================================================================
+          // =========================================================================
+
+          // === CALCULATE NEW TARGET VELOCITY DEPENDING ON SELECTED NEW LANE
+          // ========
 
           // initialize standart values
           double axEgo = 0.0;
           double tEgo = 0.0;
-          double tauGap = 0.9;
+          const double tauGap = 0.9;
           const double distanceOfInterest = 20.0;
           const double axLimitPositiv = 3.5;
           const double axLimitNegativ = -4.5;
           const double tauGapSetSpeed = 4.5;
           const double fixDesiredDistance = 10.0;
+          // get IDs of ego lane
+          vector<int> cars_ids = getLaneCars(lane, sensor_fusion);
 
           // get distance of closest IDs
           object closestObject;
           closestObject = getClosestDistanceOfEnteredCarIdsPerLaneInFront(
               cars_ids, sensor_fusion, 0.02 * prev_size, car_s, closestObject);
 
-          // Print out some information
-          cout << "============ OBJECT DATA =============" << endl;
-          cout << "closest object ID = " << closestObject.car_id << endl;
-          cout << "closest object Distance = " << closestObject.distanceToEgo
-               << endl;
-          cout << "closest object Velocity = " << closestObject.speed << endl;
-          cout << "Ego Vehicle Velocity = " << car_speed << endl;
-
           if (closestObject.distanceToEgo <= distanceOfInterest) {
+
+            // =================  Evaluate whether lane change is
+            // neccessary=========
+            lane = calcNewLane(prev_size, lane, laneData, sensor_fusion,
+                               car_speed, car_s);
+            // get IDs of ego lane
+            vector<int> cars_ids = getLaneCars(lane, sensor_fusion);
+
+            // get distance of closest IDs
+            object closestObject;
+            closestObject = getClosestDistanceOfEnteredCarIdsPerLaneInFront(
+                cars_ids, sensor_fusion, 0.02 * prev_size, car_s,
+                closestObject);
+
+            // Print out some information
+            cout << "============ OBJECT DATA =============" << endl;
+            cout << "closest object ID = " << closestObject.car_id << endl;
+            cout << "closest object Distance = " << closestObject.distanceToEgo
+                 << endl;
+            cout << "closest object Velocity = " << closestObject.speed << endl;
+            cout << "Ego Vehicle Velocity = " << car_speed << endl;
 
             double desiredDistance =
                 closestObject.distanceToEgo - (car_speed * tauGap);
@@ -428,7 +586,7 @@ int main() {
               cout << "ego is faster - axEgo = " << axEgo << endl;
             }
             if (closestObject.distanceToEgo <= double(6.0)) {
-              axEgo = -3.0;
+              axEgo = -4.0;
             }
 
           } else {
@@ -445,6 +603,9 @@ int main() {
           cout << "calculated delta velocity = " << deltaVelocity << endl;
           ref_velocity += deltaVelocity;
           cout << "calculated ref velocity = " << ref_velocity << endl;
+
+          // =========================================================================
+          // =========================================================================
 
           // Create a list of widely spaced (x,y) waypoints, evenly spaced
           // on
