@@ -176,7 +176,7 @@ struct object {
 } closestObject;
 
 // Get ID's of cars in a given lane
-vector<int> getLaneCars(int lane, json sensor_fusion) {
+vector<int> calcLaneCarsIDs(int lane, json sensor_fusion) {
   vector<int> cars_ids;
 
   for (int i = 0; i < sensor_fusion.size(); ++i) {
@@ -250,11 +250,9 @@ laneCollection averageSpeedDataForEveryLane(laneCollection laneData) {
 }
 
 // Calculate closest object data
-object getClosestDistanceOfEnteredCarIdsPerLaneInFront(vector<int> cars_ids,
-                                                       json sensor_fusion,
-                                                       double check_dist,
-                                                       double car_s,
-                                                       object closestObject) {
+object calcClosestDistanceToEgo(vector<int> cars_ids, json sensor_fusion,
+                                double check_dist, double car_s,
+                                object closestObject) {
 
   closestObject.distanceToEgo = 100000;
   for (int car_id : cars_ids) {
@@ -299,10 +297,8 @@ object getClosestDistanceOfEnteredCarIdsPerLaneInFront(vector<int> cars_ids,
   return closestObject;
 }
 
-double getClosestDistanceOfEnteredCarIdsPerLaneInFront(vector<int> cars_ids,
-                                                       json sensor_fusion,
-                                                       double check_dist,
-                                                       double car_s) {
+double calcClosestDistanceToEgo(vector<int> cars_ids, json sensor_fusion,
+                                double check_dist, double car_s) {
   double closestDistance = 100000;
   for (int car_id : cars_ids) {
     double vx = sensor_fusion[car_id][3];
@@ -374,9 +370,9 @@ int calcNewLane(int prev_size, int lane, laneCollection laneData,
     cost += getNormalized(2.0 * (avgSpeed - car_speed / avgSpeed)) * 1000;
     // Evaluate the collision
     double gap = 8;
-    vector<int> cars_ids = getLaneCars(laneCase, sensor_fusion);
-    double closestObject = getClosestDistanceOfEnteredCarIdsPerLaneInFront(
-        cars_ids, sensor_fusion, 0.02 * prev_size, car_s);
+    vector<int> cars_ids = calcLaneCarsIDs(laneCase, sensor_fusion);
+    double closestObject = calcClosestDistanceToEgo(cars_ids, sensor_fusion,
+                                                    0.02 * prev_size, car_s);
 
     if (closestObject < gap) {
       cost += 100000;
@@ -510,11 +506,11 @@ int main() {
           const double tauGapSetSpeed = 4.5;
           const double fixDesiredDistance = 10.0;
           // get IDs of ego lane
-          vector<int> cars_ids = getLaneCars(lane, sensor_fusion);
+          vector<int> cars_ids = calcLaneCarsIDs(lane, sensor_fusion);
 
           // get distance of closest IDs
           object closestObject;
-          closestObject = getClosestDistanceOfEnteredCarIdsPerLaneInFront(
+          closestObject = calcClosestDistanceToEgo(
               cars_ids, sensor_fusion, 0.02 * prev_size, car_s, closestObject);
 
           if (closestObject.distanceToEgo <= distanceOfInterest) {
@@ -524,13 +520,13 @@ int main() {
             lane = calcNewLane(prev_size, lane, laneData, sensor_fusion,
                                car_speed, car_s);
             // get IDs of ego lane
-            vector<int> cars_ids = getLaneCars(lane, sensor_fusion);
+            vector<int> cars_ids = calcLaneCarsIDs(lane, sensor_fusion);
 
             // get distance of closest IDs
             object closestObject;
-            closestObject = getClosestDistanceOfEnteredCarIdsPerLaneInFront(
-                cars_ids, sensor_fusion, 0.02 * prev_size, car_s,
-                closestObject);
+            closestObject = calcClosestDistanceToEgo(cars_ids, sensor_fusion,
+                                                     0.02 * prev_size, car_s,
+                                                     closestObject);
 
             // Print out some information
             cout << "============ OBJECT DATA =============" << endl;
