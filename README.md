@@ -10,7 +10,109 @@ In this project your goal is to safely navigate around a virtual highway with ot
 #### The map of the highway is in data/highway_map.txt
 Each waypoint in the list contains  [x,y,s,dx,dy] values. x and y are the waypoint's map coordinate position, the s value is the distance along the road to get to that waypoint in meters, the dx and dy values define the unit normal vector pointing outward of the highway loop.
 
-The highway's waypoints loop around so the frenet s value, distance along the road, goes from 0 to 6945.554.
+Each waypoint in the list contains ```[x, y, s, dx, dy]``` values. ```x``` and ```y``` are the waypoint's map coordinate position, the ```s``` value is the distance along the road to get to that waypoint in meters, the ```dx``` and ```dy``` values define the unit normal vector pointing outward of the highway loop.
+
+The track contains a total of 181 waypoints, with the last waypoint mapping back around to the first. The waypoints are located in the middle of the double-yellow diving line.
+
+The highway's waypoints loop around so the frenet ```s``` value, distance along the road, goes from 0 to 6945.554.
+
+The track is 6945.554 meters around (about 4.32 miles). Thedistance along the road, goes from 0 to 6945.554 in frenet s coordinates.
+
+# My Approach 
+
+In general there are a lot fo possible approaches to solve this problem. In this approach I try to keep things as easy as possible and to be able to drive one lap without accident and matching all project requirements. [Project requirements in detail.](https://review.udacity.com/#!/rubrics/1020/view)
+
+First step is to drive safe in one the current ego lane and be able to follow a car in a certain distance. Further more the ego vehicle needs to be able to react on sudden decellerations of the leading car. We distinguish between four szenarios for calculating the target longitudinal acceleration for lane driving. Below the neccessary calculations for each case.
+
+1. No car is in front of us --> Also called set speed control
+``` cpp
+axEgo = (setSpeed - car_speed) / tauGapSetSpeed;
+```       
+2. Leading car available but faster as ego --> also called follow control
+``` cpp
+    tEgo = 1.25;
+    axEgo = (closestObject.speed - car_speed) / tEgo;
+```
+3. Leading car available but slower than as ego --> also called follow control
+``` cpp
+    tEgo = 2.0F * desiredDistance / (car_speed - closestObject.speed);
+    axEgo = (closestObject.speed - car_speed) / tEgo;
+```
+4. Leading car decellerate a lot --> also called approach control
+``` cpp
+if (closestObject.distanceToEgo <= double(6.0)) {
+    axEgo = -4.0; // m/s2
+    axEgo = limitAcceleration(axEgo, axLimitPositiv, axLimitNegativ);
+```
+To avoid unnatural accelerations the calculated axEgo value is limited by defined parameter. This enables to match the requirements for longitudinal acceleration value.
+```cpp
+  if (axEgo > axLimitPositiv) {
+    axEgo = axLimitPositiv;
+  } else if (axEgo < axLimitNegativ) {
+    axEgo = axLimitNegativ;
+  }
+```
+To be able to calculate the equations above I search for the closest vehicle in target lane. Further more we react as recently as the closest object is within a range of x meters. This is a parameter and I set it to frenet s = 20. For the lane driving equations exist a lot of parameter to apllicate. The values depend on what performance one want to achieve.
+Hint: The target lane is not everytime the ego lane. In case the system decides to change the lane, the target lane will be the new desired lane and in case there is a leading vehicle the system will react on this one in longitudinal direction to avoid crashes.
+
+### A little little state machine
+The second stepis to evaluate what is best behavior in current traffic scenario. Based on the evaluation of the ego state according to ego speed ego lane etc. In combination with the state of all relevant vehicles in the lanes arround ego, the system builds up a decision about which lane is the best for the current cycle.
+
+In general there are three possibilities to check depending ont the current ego lane:
+| **Lane 0** | **Lane 1**| **Lane 2**|
+| ---------- |:---------:| ---------:|
+| turn right | turn left | turn left |
+| keep lane  | keep lane | keep lane |
+| ---------  | turn right| --------- |
+
+### A simple cost algorithm
+Every time we have a leading vehicle in front which is slower then max speed and and witin a parametrizeable distance we calculate the following cost for each possible lane.
+
+For getting a sense whether the possible new lane is a good choice we calculate the average speed of all vehicles in this lane in a meaningful distance to ego.
+
+1. Evaluate Lane Cost: In general a lane change is not the best possibility and depending on this passive strategy we give a lane change a cost of 1000. Furthermore the system penalize a lane change to lane 2 by factor 3 because here we have usually lower average speeds and it could be possible for the car to get on speed again because the car would be surrounded by other vehicle which make it impossible to change to a faster lane
+```cpp
+if (laneCases[1] == 2 && lane == 1) {
+      cost += 3000;
+    } else if (laneCase != lane) {
+      cost += 1000;
+    }
+```
+2. Evaluate Speed Cost: The higher the average speed of the target lane - the lower the cost
+```cpp
+double getNormalized(double x) { return 2.0f / (1.0f + exp(-x)) - 1.0f; }
+cost += getNormalized(2.0 * (avgSpeed - car_speed / avgSpeed)) * 1000;
+```
+- So in case 
+3. Evaluate Collision cost when new closest vehicle is in a distance smaller thana parametrizeable gap cost 
+```cpp
+  closestObject = getClosestDistanceOfEnteredCarIdsPerLaneInFront(
+  cars_ids, sensor_fusion, 0.02 * prev_size, car_s);
+  if (closestObject < gap) {
+      cost += 100000; }
+```
+
+at the end the lane with the best cost wins and will be entered for calculate the new waypoints.
+
+### Calculate Trajectory
+
+For calculate a comfortable trajectory and fit all requirements for longitudinal and lateral limitation of acceleration and jerks I use the spline libary:
+A really helpful resource for doing this project and creating smooth trajectories was using http://kluge.in-chemnitz.de/opensource/spline/, the spline function is in a single heather file is really easy to use.
+
+Another approach could be to use jerk minimized trajectory. this are polynomials of 5th order and are well documented in this document [document from Moritz Werling](https://d17h27t6h515a5.cloudfront.net/topher/2017/July/595fd482_werling-optimal-trajectory-generation-for-dynamic-street-scenarios-in-a-frenet-frame/werling-optimal-trajectory-generation-for-dynamic-street-scenarios-in-a-frenet-frame.pdf)
+
+## A example action
+### lane change
+![lane change](./imgAndVideo/2017-12-10_13h20_44.png "Lane Change Maneuver")
+### lane driving
+![lane driving](./imgAndVideo/2017-12-10_12h16_48.png "Lane Driving Maneuver")
+
+[video link](./imgAndVideo/2017-12-10_12h15_43.mp4)
+
+
+# Fazit:
+
+This can be a project for life time. this approach tries to simplyfy the problem within the given constrains to make sure not to over engineer the approach. There are a lot of possible improvements according to performance and decision making. Further more it could be a lot of fun to implement the JMT approach of Moritz Werling. 
 
 ## Basic Build Instructions
 
@@ -18,6 +120,11 @@ The highway's waypoints loop around so the frenet s value, distance along the ro
 2. Make a build directory: `mkdir build && cd build`
 3. Compile: `cmake .. && make`
 4. Run it: `./path_planning`.
+
+### Simulator
+You can download the Term3 Simulator which contains the Path Planning Project from the [releases tab](https://github.com/udacity/self-driving-car-sim/releases).
+
+# Details about the simluation environment
 
 Here is the data provided from the Simulator to the C++ Program
 
@@ -86,55 +193,9 @@ A really helpful resource for doing this project and creating smooth trajectorie
     cd uWebSockets
     git checkout e94b6e1
     ```
-
-## Editor Settings
-
-We've purposefully kept editor configuration files out of this repo in order to
-keep it as simple and environment agnostic as possible. However, we recommend
-using the following settings:
-
-* indent using spaces
-* set tab width to 2 spaces (keeps the matrices in source code aligned)
-
 ## Code Style
 
 Please (do your best to) stick to [Google's C++ style guide](https://google.github.io/styleguide/cppguide.html).
 
-## Project Instructions and Rubric
 
-Note: regardless of the changes you make, your project must be buildable using
-cmake and make!
-
-
-## Call for IDE Profiles Pull Requests
-
-Help your fellow students!
-
-We decided to create Makefiles with cmake to keep this project as platform
-agnostic as possible. Similarly, we omitted IDE profiles in order to ensure
-that students don't feel pressured to use one IDE or another.
-
-However! I'd love to help people get up and running with their IDEs of choice.
-If you've created a profile for an IDE that you think other students would
-appreciate, we'd love to have you add the requisite profile files and
-instructions to ide_profiles/. For example if you wanted to add a VS Code
-profile, you'd add:
-
-* /ide_profiles/vscode/.vscode
-* /ide_profiles/vscode/README.md
-
-The README should explain what the profile does, how to take advantage of it,
-and how to install it.
-
-Frankly, I've never been involved in a project with multiple IDE profiles
-before. I believe the best way to handle this would be to keep them out of the
-repo root to avoid clutter. My expectation is that most profiles will include
-instructions to copy files to a new location to get picked up by the IDE, but
-that's just a guess.
-
-One last note here: regardless of the IDE used, every submitted project must
-still be compilable with cmake and make./
-
-## How to write a README
-A well written README file can enhance your project and portfolio.  Develop your abilities to create professional README files by completing [this free course](https://www.udacity.com/course/writing-readmes--ud777).
 
